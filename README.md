@@ -28,8 +28,13 @@ Because the real planet Earth is way too big to fit into Unity, I'm generating t
 
 ## Issues
 
-1. The player capsule I'm using currently, sinks into the map if you head South, and floats up away from the earth if you head North. This I've not managed to work out why.
+1. The current method of moving is to work out the new position coords each step and move the player to that position, which breaks Unity Physics.
 2. There's no world re-centering yet, so if you walk too far away from where you start, float precision will become an issue
 3. You have to visit [Open Street Map](https://www.openstreetmap.org/) before they'll serve you image tiles.
+
+## Fixed issues
+
+1. The player capsule I'm using currently, sinks into the map if you head South, and floats up away from the earth if you head North. This I've not managed to work out why.
+  Turns out I was normalising the ECEF position vector, which makes the orientation act as if the Earth is spherical, which it ain't. New method uses GPS coordinate library to clamp coords to 0m from the WGS84 oblate spheroid. 
 
 Please feel free to create PRs or make suggestions, I've mainly put this here to get feedback on how to make it work better :)
