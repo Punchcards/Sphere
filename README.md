@@ -4,11 +4,7 @@ This is an initial attempt at creating an explorable world in Unity that is the 
 
 Video demo:
 
-[![](http://img.youtube.com/vi/XiPs_yipaeQ/0.jpg)](http://www.youtube.com/watch?v=XiPs_yipaeQ "")
-
-Map of the path travelled:
-
-<img src="https://i.imgur.com/Y1N1OAO.png" alt="alt text" width="50%" height="50%">
+[![](http://img.youtube.com/vi/MIlY8yZn2y8/0.jpg)](https://www.youtube.com/watch?v=MIlY8yZn2y8 "")
 
 ## Method
 
