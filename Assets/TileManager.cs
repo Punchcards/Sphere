@@ -32,24 +32,39 @@ public class TileManager : MonoBehaviour
     float rotationSpeed = 2.0f;
     float walkSpeed = 2.0f;
     float realisticWalkingSpeed = 1.49905207001f;
-    float devWalkingSpeed = 10f;
+    float devWalkingSpeed = 20f;
 
     float heading = 0;
 
     double scale = 1000;
 
+    public GameObject lowerPoint;
+    public GameObject upperPoint;
+
+    public GameObject arrowPrefab;
+    public GameObject arrowObject;
+
     // Start is called before the first frame update
     async void Start()
     {
+        lowerPoint = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        upperPoint = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        arrowObject = (GameObject)Instantiate(arrowPrefab);
+
+        lowerPoint.transform.localScale *= 0.25f;
+        upperPoint.transform.localScale *= 0.25f;
+
         uiText = uiTextObject.GetComponent<UnityEngine.UI.Text>();
 
         walkSpeed = devWalkingSpeed;
+        //walkSpeed = realisticWalkingSpeed;
 
         //playerPosition = new Coordinate(55.9514069, -3.1881186); // edinburgh
-        playerPosition = new Coordinate(51.494027837496965, -0.12680686529219184); // london
+        //playerPosition = new Coordinate(51.494027837496965, -0.12680686529219184); // london
         //playerPosition = new Coordinate(64.1314075, -21.9376544); // reykjavik
         //playerPosition = new Coordinate(35.6581864, 139.7009909); // shibuya
         //playerPosition = new Coordinate(-43.6263190, 172.7223080); // diamond harbour, NZ
+        playerPosition = new Coordinate(40.70585663372225, -73.99655464966919); // ny
 
         int xTile;
         int yTile;
@@ -59,17 +74,15 @@ public class TileManager : MonoBehaviour
 
         rootTile = await LoadTile(zoom, xTile, yTile);
 
-        print(xTile);
-        print(yTile);
-
         // place Player
         playerObject = (GameObject)Instantiate(playerPrefab);
-        Vector3 playerOrientation = ECEFToVector(playerPosition).normalized;
+        Vector3 playerWorldPosition = ECEFSubtract(playerPosition.ECEF, rootTileECEF);
 
-        Vector3 playerWorldPosition = ECEFToVector(playerPosition);
-        //playerWorldPosition += playerOrientation;
+        Vector3 playerOrientation = ECEFToVectorNoScale(playerPosition).normalized;
 
-        //playerObject.transform.position = playerWorldPosition;
+        playerWorldPosition += playerOrientation;
+
+        playerObject.transform.position = playerWorldPosition;
         playerObject.transform.rotation = Quaternion.FromToRotation(Vector3.up, playerOrientation);
     }
 
@@ -81,7 +94,11 @@ public class TileManager : MonoBehaviour
 
         meshRenderer.material = new Material(Shader.Find("Standard"));
 
-        meshRenderer.material.mainTexture = await GetRemoteTexture("https://a.tile.openstreetmap.org/" + zoom + "/" + xTile + "/" + yTile + ".png");
+        string url = "https://a.tile.openstreetmap.org/" + zoom + "/" + xTile + "/" + yTile + ".png";
+
+        meshRenderer.material.mainTexture = await GetRemoteTexture(url);
+
+        //print(url);
 
         MeshFilter meshFilter = tileMesh.AddComponent<MeshFilter>();
         Mesh mesh = new Mesh();
@@ -220,92 +237,143 @@ public class TileManager : MonoBehaviour
         return (Math.Atan(Math.Sinh(n))) * (180 / Math.PI);
     }
 
-    // Update is called once per frame
+    // Unity == ECEF
+    // X == Y * -1
+    // Y == Z
+    // Z == X
+
+    // ECEF == Unity
+    // X == Z
+    // Y == X * -1
+    // Z == Y
     async void Update()
     {
         string text = "";
 
-        if (rootTileECEF != null)
-        {
-            text += "Origin: " + rootTileECEF + Environment.NewLine;
-        }
-
-        if (playerObject != null)
-        {
-            text += "Player: " + playerObject.transform.position + Environment.NewLine;
-        }
-
         if (rootTileECEF != null && playerObject != null)
         {
+            float translation = Input.GetAxis("Vertical") * walkSpeed;
+            translation *= Time.deltaTime;
+
+            float headingDelta = rotationSpeed * Input.GetAxis("Mouse X");
+            heading += headingDelta;
+            heading %= 360;
+
+            // Get the ECEF location of the root tile in ECEF space
             double X = rootTileECEF.X;
             double Y = rootTileECEF.Y;
             double Z = rootTileECEF.Z;
 
-            X += (playerObject.transform.position.z / scale);
-            Y += (playerObject.transform.position.x / scale) * -1;
-            Z += (playerObject.transform.position.y / scale);
+            // Add the player position relative to the root tile, divide by scale because unity units ate in m and ECEF units are in km
+            Vector3 playerPosition = playerObject.transform.position + (playerObject.transform.forward * translation);
+            X += (playerPosition.z / scale);
+            Y += ((playerPosition.x / scale) * -1);
+            Z += (playerPosition.y / scale);
 
-            text += "World position ECEF: " + X + ", " + Y + ", " + Z + Environment.NewLine;
+            // Get the coordinated of the player location on earth
+            Coordinate playerCoordinates = ECEF.ECEFToLatLong(X, Y, Z);
+            playerCoordinates.FormatOptions = new CoordinateFormatOptions() { Format = CoordinateFormatType.Decimal, Round = 15 };
 
-            Coordinate c = ECEF.ECEFToLatLong(X, Y, Z);
-            c.FormatOptions = new CoordinateFormatOptions() { Format = CoordinateFormatType.Decimal, Round = 15 };
+            // Build a new Coordinate object using the lat/long from the previous step
+            // this will assume the coords are on the WGS84 spheroid
+            Coordinate playerCoordinatesSetHeight = new Coordinate(playerCoordinates.Latitude.DecimalDegree, playerCoordinates.Longitude.DecimalDegree);
+            playerCoordinatesSetHeight.FormatOptions = new CoordinateFormatOptions() { Format = CoordinateFormatType.Decimal, Round = 15 };
 
-            text += "World position GPS: " + c + Environment.NewLine;
+            // Get the ECEF coordinates on the surface of the WGS84 ellipsoid
+            ECEF playerECEF_0m = playerCoordinatesSetHeight.ECEF;
+            Vector3 relativeLocation_0m = ECEFSubtract(playerECEF_0m, rootTileECEF);
+
+            // Get the ECEF coordinates 1 m up from the WGS84 ellipsoid
+            ECEF playerECEF_1m = new ECEF(playerCoordinatesSetHeight, new Distance(0.001));
+            Vector3 relativeLocation_1m = ECEFSubtract(playerECEF_1m, rootTileECEF);
+
+            // Get the ECEF coordinates 2 m up from the WGS84 ellipsoid
+            ECEF playerECEF_2m = new ECEF(playerCoordinatesSetHeight, new Distance(0.002));
+            Vector3 relativeLocation_2m = ECEFSubtract(playerECEF_2m, rootTileECEF);
+
+            // Work out the direction of gravity, which way "down" is at this location on the WGS84 ellipsoid
+            Vector3 gravityVector = (relativeLocation_0m - relativeLocation_1m).normalized;
+            Quaternion gravityDirection = Quaternion.FromToRotation(Vector3.up, gravityVector);
+
+            // put the gravity indicator 1m off the ground, pointing "down"
+            arrowObject.transform.position = relativeLocation_1m;
+            arrowObject.transform.rotation = gravityDirection;
+
+            // player should be oriented away from gravity
+            Quaternion playerOrientation = Quaternion.FromToRotation(Vector3.up, gravityVector * -1);
+
+            // the player's origin is in the centre of the 2m tall capsule, so use the location 1m from the surface as the position
+            // this kind of position update breaks physics, so should probably work out some way of shoving the player to this new position
+            // by subtracting the current position from the new, then using addforce?
+            Vector3 delta = relativeLocation_1m - playerObject.transform.position;
+            playerObject.transform.position = relativeLocation_1m;
+
+            // set the player to point away from gravity
+            // this kind of rotation update breaks physics, so should probably work out some way of shoving the player to this new rotation
+            // by subtracting the current rotation from the new, then using addforce?
+            playerObject.transform.rotation = playerOrientation;
+
+            // add the left-right rotation to the player's rotation
+            playerObject.transform.Rotate(0, heading, 0);
+
+            // set the indicators to the surface and 2m
+            lowerPoint.transform.position = relativeLocation_0m;
+            upperPoint.transform.position = relativeLocation_2m;
+
+            text += playerCoordinates + " @ " + playerCoordinates.ECEF.GeoDetic_Height.Meters + " -> " + playerCoordinates.ECEF + Environment.NewLine;
+            text += playerCoordinatesSetHeight + " @ " + playerECEF_1m.GeoDetic_Height.Meters + " -> " + playerECEF_1m + Environment.NewLine;
+
+            LoadTilesForPlayerLocation(playerCoordinatesSetHeight.Latitude.DecimalDegree, playerCoordinatesSetHeight.Longitude.DecimalDegree);
 
             if (Input.GetKeyDown("space"))
             {
                 print("space key was pressed");
-                string f = "" + c;
+                string f = "" + playerCoordinatesSetHeight;
                 url += f.Replace(" ", ",") + "/";
                 print(url);
             }
-
-            int tileX;
-            int tileY;
-
-            // get the tile where the player is
-            LatLongToTileNumbers(c.Latitude.DecimalDegree, c.Longitude.DecimalDegree, zoom, out tileX, out tileY);
-
-            if (currentTileX != tileX || currentTileY != tileY)
-            {
-                currentTileX = tileX;
-                currentTileY = tileY;
-
-                //print("Moved to tile " + currentTileX + "," + currentTileY);
-
-                int tileDistance = 2;
-                for (int x = currentTileX - tileDistance; x < currentTileX + tileDistance; x++)
-                {
-                    for (int y = currentTileY - tileDistance; y < currentTileY + tileDistance; y++)
-                    { 
-                        if (!tiles.ContainsKey(new KeyValuePair<int, int>(x, y)))
-                        {
-                            //print("Loading tile " + x + "," + y);
-                            LoadTile(zoom, x, y);
-                        }
-                    }
-                }
-            }
-
-            text += "Tile: " + currentTileX + ", " + currentTileY + Environment.NewLine;
-
-            Vector3 playerOrientation = ECEFToVector(c).normalized;
-
-            text += "o: " + playerOrientation.ToString("F8");
-
-            float h = rotationSpeed * Input.GetAxis("Mouse X");
-            heading += h;
-            heading %= 360;
-
-            playerObject.transform.rotation = Quaternion.FromToRotation(Vector3.up, playerOrientation);
-            playerObject.transform.Rotate(0, heading, 0, Space.Self);
-
-            float translation = Input.GetAxis("Vertical") * walkSpeed;
-            translation *= Time.deltaTime;
-            playerObject.transform.Translate(Vector3.forward * translation);
         }
 
         uiText.text = text;
+    }
+
+    public void LoadTilesForPlayerLocation(double lat, double lng)
+    {
+        int tileX;
+        int tileY;
+
+        // get the tile where the player is
+        LatLongToTileNumbers(lat, lng, zoom, out tileX, out tileY);
+
+        // if the player has moved tile
+        if (currentTileX != tileX || currentTileY != tileY)
+        {
+            currentTileX = tileX;
+            currentTileY = tileY;
+
+            //print("Moved to tile " + currentTileX + "," + currentTileY);
+            int tileDistance = 2;
+            for (int x = currentTileX - tileDistance; x < currentTileX + tileDistance; x++)
+            {
+                for (int y = currentTileY - tileDistance; y < currentTileY + tileDistance; y++)
+                {
+                    if (!tiles.ContainsKey(new KeyValuePair<int, int>(x, y)))
+                    {
+                        //print("Loading tile " + x + "," + y);
+                        LoadTile(zoom, x, y);
+                    }
+                }
+            }
+        }
+    }
+
+    public Vector3 ECEFToVectorNoScale(Coordinate toConvert)
+    {
+        double X = toConvert.ECEF.X;
+        double Y = (toConvert.ECEF.Y) * -1;
+        double Z = toConvert.ECEF.Z;
+
+        return new Vector3((float)Y, (float)Z, (float)X);
     }
 
     public Vector3 ECEFToVector(Coordinate toConvert)
@@ -322,6 +390,16 @@ public class TileManager : MonoBehaviour
         double X = (a.X * scale) - (b.X * scale);
         double Y = ((a.Y * scale) - (b.Y * scale)) * -1;
         double Z = (a.Z * scale) - (b.Z * scale);
+
+        // Unity == ECEF
+        // X == Y * -1
+        // Y == Z
+        // Z == X
+
+        // ECEF == Unity
+        // X == Z
+        // Y == X * -1
+        // Z == Y
 
         return new Vector3((float)Y, (float)Z, (float)X);
     }

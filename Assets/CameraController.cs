@@ -19,6 +19,6 @@ public class CameraController : MonoBehaviour
     void Update()
     {
         float v = verticalSpeed * Input.GetAxis("Mouse Y");
-        transform.Rotate(v, 0, 0);
+        //transform.Rotate(v, 0, 0);
     }
 }
